@@ -45,7 +45,16 @@ const userIdMap = {}; // LINE ID -> member key
 
 // ====== Webhookエンドポイント ======
 app.post('/webhook', line.middleware(lineConfig), (req, res) => {
-  console.log('📩 Webhook received:', JSON.stringify(req.body, null, 2)); // ← デバッグ用ログ
+  console.log('==========================');
+  console.log('📩 Webhook HIT!!');
+  console.log('Headers:', JSON.stringify(req.headers, null, 2));
+  console.log('Body:', JSON.stringify(req.body, null, 2));
+  console.log('==========================');
+
+  if (!req.body.events || req.body.events.length === 0) {
+    console.log('⚠️ events が空です！');
+    return res.status(200).end();  // 空でも200は返す
+  }
 
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
