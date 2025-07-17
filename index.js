@@ -1,44 +1,31 @@
-// ====== 必要なライブラリをインストールする ======
-// npm install express @line/bot-sdk firebase-admin body-parser
-
 import express from 'express';
 import line from '@line/bot-sdk';
-import bodyParser from 'body-parser';
 import admin from 'firebase-admin';
+
+const app = express();
+const port = process.env.PORT || 3000;
 
 // ====== LINE Bot設定 ======
 const lineConfig = {
-  channelAccessToken: 'abTxJSxJECgpA3pdX1u2KL/n/iUtV9DXpbESilhlNfIN9zfMPC1oKmRSoXzAsUyyBL6faXDy9eo2iuGmtOmfsFTyWBJnt0VS5TMw5MwlBYgq4kUmvtbvUX/5U44DwGJ7g6lH+aqBL3+XOXXaEiQiNQdB04t89/1O/w1cDnyilFU=',
-  channelSecret: '8f309dbf0a6ee762e9cf7763c498479e'
+  channelAccessToken: process.env.LINE_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET
 };
+const client = new line.Client(lineConfig);
 
 // ====== Firebase設定 ======
 const firebaseConfig = {
-  apiKey: "AIzaSyCh6S6NaBP4d2_2AMaNq7SOzAqAZr3l5Ok",
-  databaseURL: "https://kashima-lab-status-default-rtdb.firebaseio.com"
+  apiKey: process.env.FIREBASE_API_KEY,
+  databaseURL: process.env.FIREBASE_DB_URL
 };
 
 // Firebase Admin初期化
-admin.initializeApp({
-  credential: admin.credential.applicationDefault(),
-  databaseURL: firebaseConfig.databaseURL
-});
-
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+    databaseURL: firebaseConfig.databaseURL
+  });
+}
 const db = admin.database();
-const app = express();
-const port = process.env.PORT || 3000;
-const lineClient = new line.Client(lineConfig);
-
-// LINE Webhookの受け取り設定
-app.use(bodyParser.json());
-app.post('/webhook', (req, res) => {
-  Promise.all(req.body.events.map(handleEvent))
-    .then((result) => res.json(result))
-    .catch((err) => {
-      console.error(err);
-      res.status(500).end();
-    });
-});
 
 // 固定メンバーリスト（M2→B4順）
 const memberList = [
@@ -53,13 +40,27 @@ const memberList = [
   { id: 'arakida', name: '荒木田' }
 ];
 
-// ユーザーID→メンバー名マッピング（最初は空、LINE IDがわかったら紐づける）
-const userIdMap = {
-  // 'LINEのUserID': 'kashima'
-};
+// とりあえず全員「未登録許可」にする（後でユーザーID紐づけ可）
+const userIdMap = {}; // LINE ID -> member key
 
-// LINEイベント処理
+// ====== Webhookエンドポイント ======
+app.post('/webhook', line.middleware(lineConfig), (req, res) => {
+  Promise.all(req.body.events.map(handleEvent))
+    .then((result) => res.json(result))
+    .catch((err) => {
+      console.error('Error in webhook:', err);
+      res.status(500).end();
+    });
+});
+
+// 動作確認用ルート
+app.get('/', (req, res) => {
+  res.send('LINE Bot + Firebase is running!');
+});
+
+// ====== メインのイベント処理 ======
 async function handleEvent(event) {
+  // メッセージ以外は無視
   if (event.type !== 'message' || event.message.type !== 'text') {
     return Promise.resolve(null);
   }
@@ -67,33 +68,39 @@ async function handleEvent(event) {
   const userId = event.source.userId;
   const text = event.message.text;
 
-  // ユーザーIDが登録されてるか確認
-  const memberKey = userIdMap[userId];
+  // メンバー判別（仮に全員OKにする）
+  let memberKey = userIdMap[userId];
+
   if (!memberKey) {
-    return lineClient.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '⚠️ あなたはまだメンバー登録されていません。\n管理者に登録してもらってください。'
-    });
+    // 仮でテスト用に鹿島固定
+    memberKey = 'kashima';
   }
 
-  // 時刻を作成（MM/DD HH:mm形式）
+  // 更新時刻（MM/DD HH:mm）
   const now = new Date();
-  const updatedAt = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const updatedAt = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(
+    now.getDate()
+  ).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(
+    now.getMinutes()
+  ).padStart(2, '0')}`;
 
-  // Firebaseに書き込み
+  // Firebaseに書き込み（30文字に切る）
   await db.ref(`members/${memberKey}`).set({
-    name: memberList.find(m => m.id === memberKey).name,
-    message: text.substring(0, 30), // 30文字制限
+    name: memberList.find((m) => m.id === memberKey).name,
+    message: text.substring(0, 30),
     updated_at: updatedAt
   });
 
-  return lineClient.replyMessage(event.replyToken, {
+  return client.replyMessage(event.replyToken, {
     type: 'text',
-    text: `✅ 更新しました！\n「${text.substring(0, 30)}」 (${updatedAt})`
+    text: `✅ ステータス更新しました！\n「${text.substring(
+      0,
+      30
+    )}」 (${updatedAt})`
   });
 }
 
 // サーバー起動
 app.listen(port, () => {
-  console.log(`LINE Bot + Firebase server running on port ${port}`);
+  console.log(`Server running on ${port}`);
 });
