@@ -1,0 +1,15 @@
+{
+  "name": "planaria-lab-status-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^7.5.0",
+    "express": "^4.18.2",
+    "firebase-admin": "^11.5.0",
+    "body-parser": "^1.20.2"
+  }
+}
