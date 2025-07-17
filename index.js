@@ -45,13 +45,16 @@ const userIdMap = {}; // LINE ID -> member key
 
 // ====== Webhookエンドポイント ======
 app.post('/webhook', line.middleware(lineConfig), (req, res) => {
+  console.log('📩 Webhook received:', JSON.stringify(req.body, null, 2)); // ← デバッグ用ログ
+
   Promise.all(req.body.events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => {
-      console.error('Error in webhook:', err);
+      console.error('❌ Error in webhook:', err);
       res.status(500).end();
     });
 });
+
 
 // 動作確認用ルート
 app.get('/', (req, res) => {
@@ -60,6 +63,7 @@ app.get('/', (req, res) => {
 
 // ====== メインのイベント処理 ======
 async function handleEvent(event) {
+console.log('👉 Handling event:', event); 
   // メッセージ以外は無視
   if (event.type !== 'message' || event.message.type !== 'text') {
     return Promise.resolve(null);
