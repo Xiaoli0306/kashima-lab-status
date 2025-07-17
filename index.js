@@ -1,5 +1,6 @@
 import express from 'express';
 import line from '@line/bot-sdk';
+import admin from 'firebase-admin';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -11,6 +12,35 @@ const lineConfig = {
 };
 const client = new line.Client(lineConfig);
 
+// ====== Firebase設定 ======
+// 1行JSONの環境変数をパース
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+
+// Firebase Admin初期化
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: process.env.FIREBASE_DB_URL
+  });
+}
+const db = admin.database();
+
+// 固定メンバーリスト（M2→B4順）
+const memberList = [
+  { id: 'kashima', name: '鹿島' },
+  { id: 'inpyo', name: '陰平' },
+  { id: 'amami', name: '天海' },
+  { id: 'ube', name: '宇部' },
+  { id: 'suzuki', name: '鈴木' },
+  { id: 'fujita', name: '藤田' },
+  { id: 'deguchi', name: '出口' },
+  { id: 'adachi', name: '安達' },
+  { id: 'arakida', name: '荒木田' }
+];
+
+// とりあえず全員「未登録許可」にする（後でユーザーID紐づけ可）
+const userIdMap = {}; // LINE ID -> member key
+
 // ====== Webhookエンドポイント ======
 app.post('/webhook', line.middleware(lineConfig), (req, res) => {
   console.log('==========================');
@@ -19,25 +49,13 @@ app.post('/webhook', line.middleware(lineConfig), (req, res) => {
   console.log('Body:', JSON.stringify(req.body, null, 2));
   console.log('==========================');
 
-  // 応答がない場合でもLINE側に200を返す
   if (!req.body.events || req.body.events.length === 0) {
     console.log('⚠️ events が空です！');
-    return res.status(200).end();
+    return res.status(200).end();  // 空でも200は返す
   }
 
-  // イベントごとに処理
-  Promise.all(
-    req.body.events.map(async (event) => {
-      if (event.type === 'message' && event.message.type === 'text') {
-        // 送られたメッセージをそのままオウム返し
-        await client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: `オウム返し: ${event.message.text}`
-        });
-      }
-    })
-  )
-    .then(() => res.status(200).end())
+  Promise.all(req.body.events.map(handleEvent))
+    .then((result) => res.json(result))
     .catch((err) => {
       console.error('❌ Error in webhook:', err);
       res.status(500).end();
@@ -45,4 +63,55 @@ app.post('/webhook', line.middleware(lineConfig), (req, res) => {
 });
 
 // 動作確認用ルート
-ap
+app.get('/', (req, res) => {
+  res.send('LINE Bot + Firebase is running!');
+});
+
+// ====== メインのイベント処理 ======
+async function handleEvent(event) {
+  console.log('👉 Handling event:', event);
+
+  // メッセージ以外は無視
+  if (event.type !== 'message' || event.message.type !== 'text') {
+    return Promise.resolve(null);
+  }
+
+  const userId = event.source.userId;
+  const text = event.message.text;
+
+  // メンバー判別（仮に全員OKにする）
+  let memberKey = userIdMap[userId];
+
+  if (!memberKey) {
+    // 仮でテスト用に鹿島固定
+    memberKey = 'kashima';
+  }
+
+  // 更新時刻（MM/DD HH:mm）
+  const now = new Date();
+  const updatedAt = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(
+    now.getDate()
+  ).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(
+    now.getMinutes()
+  ).padStart(2, '0')}`;
+
+  // Firebaseに書き込み（30文字に切る）
+  await db.ref(`members/${memberKey}`).set({
+    name: memberList.find((m) => m.id === memberKey).name,
+    message: text.substring(0, 30),
+    updated_at: updatedAt
+  });
+
+  return client.replyMessage(event.replyToken, {
+    type: 'text',
+    text: `✅ ステータス更新しました！\n「${text.substring(
+      0,
+      30
+    )}」 (${updatedAt})`
+  });
+}
+
+// サーバー起動
+app.listen(port, () => {
+  console.log(`Server running on ${port}`);
+});
