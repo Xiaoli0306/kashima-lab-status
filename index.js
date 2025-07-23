@@ -13,10 +13,15 @@ const lineConfig = {
 const client = new line.Client(lineConfig);
 
 // ====== Firebase設定 ======
-// 1行JSONの環境変数をパース
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+let rawServiceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
 
-// Firebase Admin初期化
+// Vercelでは\ nが\\nになっている場合があるので両対応
+if (rawServiceAccount.includes('\\n')) {
+  rawServiceAccount = rawServiceAccount.replace(/\\n/g, '\n');
+}
+
+const serviceAccount = JSON.parse(rawServiceAccount);
+
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
@@ -25,7 +30,7 @@ if (!admin.apps.length) {
 }
 const db = admin.database();
 
-// 固定メンバーリスト（M2→B4順）
+// 固定メンバーリスト
 const memberList = [
   { id: 'kashima', name: '鹿島' },
   { id: 'inpyo', name: '陰平' },
@@ -38,7 +43,6 @@ const memberList = [
   { id: 'arakida', name: '荒木田' }
 ];
 
-// とりあえず全員「未登録許可」にする（後でユーザーID紐づけ可）
 const userIdMap = {}; // LINE ID -> member key
 
 // ====== Webhookエンドポイント ======
@@ -58,7 +62,7 @@ app.post('/webhook', line.middleware(lineConfig), (req, res) => {
     .then((result) => res.json(result))
     .catch((err) => {
       console.error('❌ Error in webhook:', err);
-      res.status(500).end();
+      res.status(500).json({ error: err.message, stack: err.stack });
     });
 });
 
@@ -71,7 +75,12 @@ app.get('/', (req, res) => {
 async function handleEvent(event) {
   console.log('👉 Handling event:', event);
 
-  // メッセージ以外は無視
+  // Webhook検証イベントはreplyTokenがダミーなのでスキップ
+  if (event.replyToken === '00000000000000000000000000000000') {
+    console.log('✅ Webhook検証イベントなので返信スキップ');
+    return Promise.resolve(null);
+  }
+
   if (event.type !== 'message' || event.message.type !== 'text') {
     return Promise.resolve(null);
   }
@@ -79,15 +88,8 @@ async function handleEvent(event) {
   const userId = event.source.userId;
   const text = event.message.text;
 
-  // メンバー判別（仮に全員OKにする）
-  let memberKey = userIdMap[userId];
+  let memberKey = userIdMap[userId] || 'kashima'; // 仮に鹿島固定
 
-  if (!memberKey) {
-    // 仮でテスト用に鹿島固定
-    memberKey = 'kashima';
-  }
-
-  // 更新時刻（MM/DD HH:mm）
   const now = new Date();
   const updatedAt = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(
     now.getDate()
